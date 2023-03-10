@@ -52,6 +52,9 @@ impl ParseObject {
                     hm.insert(k, v);
                     Ok(ParseObject::End(Json::Object(hm)))
                 }
+                Parse::EndWithSquareBracket(_) => {
+                    Err(ParseError("Unexpected square bracket!".to_string()))
+                }
                 other => Ok(ParseObject::Value(hm, k, Box::new(other))),
             },
             ParseObject::End(_) => Err(ParseError("Unexpected trailing characters!".to_string())),
