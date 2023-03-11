@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::json::Json;
 use crate::parse::Parse;
-use crate::parse_error::{ParseError, Result};
+use crate::parse_error::{ParseError, ParseResult};
 use crate::utils;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParseObject {
     WaitForKey(HashMap<String, Json>),
     Key(HashMap<String, Json>, String),
@@ -18,19 +18,23 @@ impl ParseObject {
     pub fn new() -> Self {
         ParseObject::WaitForKey(HashMap::new())
     }
-    pub fn transition(self, c: char) -> Result<Self> {
+    pub fn transition(self, c: char) -> ParseResult<Self> {
         match self {
             ParseObject::WaitForKey(hm) => match c {
                 '"' => Ok(ParseObject::Key(hm, String::new())),
                 '}' => Ok(ParseObject::End(Json::Object(hm))),
-                _ => Err(ParseError(
-                    "Unexpected character when waitng for key!".to_string(),
+                _ => Err((
+                    ParseObject::WaitForKey(hm),
+                    ParseError("Unexpected character when waitng for key!".to_string()),
                 )),
             },
             ParseObject::Key(hm, k) => match c {
                 '"' => {
                     if hm.contains_key(&k) {
-                        return Err(ParseError("Non unique identifier!".to_string()));
+                        return Err((
+                            ParseObject::Key(hm, k),
+                            ParseError("Non unique identifier!".to_string()),
+                        ));
                     } else {
                         Ok(ParseObject::WaitForColon(hm, k))
                     }
@@ -39,25 +43,33 @@ impl ParseObject {
             },
             ParseObject::WaitForColon(hm, k) => match c {
                 ':' => Ok(ParseObject::Value(hm, k, Box::new(Parse::WaitForType))),
-                _ => Err(ParseError(
-                    "Unexpected character when waitng for colon!".to_string(),
+                _ => Err((
+                    ParseObject::WaitForColon(hm, k),
+                    ParseError("Unexpected character when waitng for colon!".to_string()),
                 )),
             },
-            ParseObject::Value(mut hm, k, v) => match v.transition(c)? {
-                Parse::EndWithComma(v) => {
-                    hm.insert(k, v);
-                    Ok(ParseObject::WaitForKey(hm))
-                }
-                Parse::EndWithBracket(v) => {
-                    hm.insert(k, v);
-                    Ok(ParseObject::End(Json::Object(hm)))
-                }
-                Parse::EndWithSquareBracket(_) => {
-                    Err(ParseError("Unexpected square bracket!".to_string()))
-                }
-                other => Ok(ParseObject::Value(hm, k, Box::new(other))),
+            ParseObject::Value(mut hm, k, v) => match v.transition(c) {
+                Ok(v) => match v {
+                    Parse::EndWithComma(v) => {
+                        hm.insert(k, v);
+                        Ok(ParseObject::WaitForKey(hm))
+                    }
+                    Parse::EndWithBracket(v) => {
+                        hm.insert(k, v);
+                        Ok(ParseObject::End(Json::Object(hm)))
+                    }
+                    pewsb @ Parse::EndWithSquareBracket(_) => Err((
+                        ParseObject::Value(hm, k, Box::new(pewsb)),
+                        ParseError("Unexpected square bracket!".to_string()),
+                    )),
+                    other => Ok(ParseObject::Value(hm, k, Box::new(other))),
+                },
+                Err((p, e)) => Err((ParseObject::Value(hm, k, Box::new(p)), e)),
             },
-            ParseObject::End(_) => Err(ParseError("Unexpected trailing characters!".to_string())),
+            end @ ParseObject::End(_) => Err((
+                end,
+                ParseError("Unexpected trailing characters!".to_string()),
+            )),
         }
     }
 }

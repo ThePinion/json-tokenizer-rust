@@ -1,9 +1,9 @@
 use crate::parse_array::ParseArray;
-use crate::parse_error::{ParseError, Result};
+use crate::parse_error::{ParseError, ParseResult};
 use crate::utils;
 use crate::{json::Json, parse_number::ParseNumber, parse_object::ParseObject};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Parse {
     WaitForType,
     String(String),
@@ -17,7 +17,7 @@ pub enum Parse {
 }
 
 impl Parse {
-    pub fn transition(self, c: char) -> Result<Self> {
+    pub fn transition(self, c: char) -> ParseResult<Self> {
         if let ' ' | '\n' | '\r' = c {
             //TODO: Not that simple :)
             return Ok(self);
@@ -27,9 +27,13 @@ impl Parse {
                 '"' => Ok(Parse::String(String::new())),
                 '{' => Ok(Parse::Object(ParseObject::new())),
                 '[' => Ok(Parse::Array(ParseArray::new())),
-                '0'..='9' | '.' | '-' => Ok(Parse::Number(ParseNumber::new_with_char(c)?)),
-                _ => Err(ParseError(
-                    "Unexpected character when waiting for type!".to_string(),
+                '0'..='9' | '.' | '-' => match ParseNumber::new_with_char(c) {
+                    Ok(v) => Ok(Parse::Number(v)),
+                    Err(e) => Err((self, e)),
+                },
+                _ => Err((
+                    self,
+                    ParseError("Unexpected character when waiting for type!".to_string()),
                 )),
             },
             Parse::String(s) => match c {
@@ -37,33 +41,55 @@ impl Parse {
                 c => Ok(Parse::String(utils::push(s, c))),
             },
             Parse::Number(pn) => match c {
-                ',' => Ok(Parse::EndWithComma(pn.to_json()?)),
-                '}' => Ok(Parse::EndWithBracket(pn.to_json()?)),
-                ']' => Ok(Parse::EndWithSquareBracket(pn.to_json()?)),
-                ' ' | '\n' => Ok(Parse::WaitForClosure(pn.to_json()?)),
-                '0'..='9' | '.' => Ok(Parse::Number(pn.transition(c)?)),
-                _ => Err(ParseError(
-                    "Unexpected character when parsing number!".to_string(),
+                ',' => match pn.to_json() {
+                    Ok(v) => Ok(Parse::EndWithComma(v)),
+                    Err(e) => Err((Parse::Number(pn), e)),
+                },
+                '}' => match pn.to_json() {
+                    Ok(v) => Ok(Parse::EndWithBracket(v)),
+                    Err(e) => Err((Parse::Number(pn), e)),
+                },
+                ']' => match pn.to_json() {
+                    Ok(v) => Ok(Parse::EndWithSquareBracket(v)),
+                    Err(e) => Err((Parse::Number(pn), e)),
+                },
+                ' ' | '\n' => match pn.to_json() {
+                    Ok(v) => Ok(Parse::WaitForClosure(v)),
+                    Err(e) => Err((Parse::Number(pn), e)),
+                },
+                '0'..='9' | '.' => match pn.transition(c) {
+                    Ok(v) => Ok(Parse::Number(v)),
+                    Err(_) => todo!(),
+                },
+                _ => Err((
+                    Parse::Number(pn),
+                    ParseError("Unexpected character when parsing number!".to_string()),
                 )),
             },
             Parse::WaitForClosure(json) => match c {
                 ',' => Ok(Parse::EndWithComma(json)),
                 '}' => Ok(Parse::EndWithBracket(json)),
                 ']' => Ok(Parse::EndWithSquareBracket(json)),
-                _ => Err(ParseError(
-                    "Unexpected character when waiting for closure!".to_string(),
+                _ => Err((
+                    Parse::WaitForClosure(json),
+                    ParseError("Unexpected character when waiting for closure!".to_string()),
                 )),
             },
-            Parse::Object(po) => match po.transition(c)? {
-                ParseObject::End(v) => Ok(Parse::WaitForClosure(v)),
-                other => Ok(Parse::Object(other)),
+            Parse::Object(po) => match po.transition(c) {
+                Ok(ParseObject::End(v)) => Ok(Parse::WaitForClosure(v)),
+                Ok(other) => Ok(Parse::Object(other)),
+                Err((po, e)) => Err((Parse::Object(po), e)),
             },
-            Parse::Array(pa) => match pa.transition(c)? {
-                ParseArray::End(v) => Ok(Parse::WaitForClosure(v)),
-                other => Ok(Parse::Array(other)),
+            Parse::Array(pa) => match pa.transition(c) {
+                Ok(ParseArray::End(v)) => Ok(Parse::WaitForClosure(v)),
+                Ok(other) => Ok(Parse::Array(other)),
+                Err((pa, e)) => Err((Parse::Array(pa), e)),
             },
             Parse::EndWithBracket(_) | Parse::EndWithComma(_) | Parse::EndWithSquareBracket(_) => {
-                Err(ParseError("Unexpected trailing characters!".to_string()))
+                Err((
+                    self,
+                    ParseError("Unexpected trailing characters!".to_string()),
+                ))
             }
         }
     }

@@ -1,10 +1,7 @@
-use crate::{
-    parse::Parse,
-    parse_error::{ParseError, Result},
-};
+use crate::{parse::Parse, parse_error::ParseError};
 use std::collections::HashMap;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Json {
     String(String),
     Object(HashMap<String, Json>),
@@ -14,10 +11,13 @@ pub enum Json {
 }
 
 impl Json {
-    pub fn parse(s: String) -> Result<Self> {
+    pub fn parse(s: String) -> Result<Self, ParseError> {
         let mut parse = Parse::WaitForType;
-        for c in s.chars() {
-            parse = parse.transition(c)?;
+        for (i, c) in s.chars().enumerate() {
+            parse = parse.transition(c).unwrap_or_else(|pe| {
+                println!("Position: {} Error: {:?}", i, pe.1);
+                pe.0
+            });
             // println!("{}:{:?}", c, parse);
         }
         match parse {
